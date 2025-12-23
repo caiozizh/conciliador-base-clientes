@@ -170,6 +170,7 @@ const App = () => {
   const [sortConfig, setSortConfig] = useState({ key: 'nome', direction: 'asc' });
   const [isSyncing, setIsSyncing] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [workTab, setWorkTab] = useState('analisar');
 
   const [columnFilters, setColumnFilters] = useState({ 
     id: '', 
@@ -308,6 +309,13 @@ const App = () => {
     }
     return items;
   }, [allConsolidatedData, searchTerm, sortConfig, columnFilters]);
+
+  const displayedData = useMemo(() => {
+    if (workTab === 'correto') {
+      return filteredData.filter(i => i.diagnostico === 'Consistente' && i.confrontoArea === 'OK');
+    }
+    return filteredData.filter(i => !(i.diagnostico === 'Consistente' && i.confrontoArea === 'OK'));
+  }, [filteredData, workTab]);
 
   // 3. Effects
   useEffect(() => {
@@ -575,12 +583,43 @@ const App = () => {
 
         {activeTab === 'explorer' && (
           <div className="space-y-4 animate-in fade-in duration-300">
+            <div className="bg-white p-2 rounded-2xl border flex items-center gap-2 shadow-sm">
+              {[
+                { id: 'analisar', label: 'Analisar' },
+                { id: 'correto', label: 'Correto' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setWorkTab(tab.id)}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                    workTab === tab.id ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {tab.label}
+                  <span className={`ml-2 text-[9px] px-2 py-0.5 rounded-full font-black ${
+                    workTab === tab.id ? 'bg-white/20 text-white' : 'bg-white text-slate-600'
+                  }`}>
+                    {tab.id === 'correto'
+                      ? filteredData.filter(i => i.diagnostico === 'Consistente' && i.confrontoArea === 'OK').length
+                      : filteredData.filter(i => !(i.diagnostico === 'Consistente' && i.confrontoArea === 'OK')).length}
+                  </span>
+                </button>
+              ))}
+              {/* <span className="ml-auto text-[10px] font-black uppercase text-slate-500 pr-2">
+                {displayedData.length} registros
+              </span> */}
+            </div>
             <div className="bg-white p-4 rounded-2xl border flex flex-wrap items-center justify-between gap-4 shadow-sm">
               <div className="flex items-center gap-3">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   <input type="text" placeholder="Busca CNPJ ou Nome..." className="pl-9 pr-4 py-2 border rounded-xl w-64 outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-slate-50" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                 </div>
+                {searchTerm && (
+                  <span className="text-[9px] bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full font-black uppercase">
+                    {displayedData.length} resultados
+                  </span>
+                )}
                 {selectedIds.size > 0 && (
                   <button onClick={() => setIsPayerModalOpen(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg flex items-center gap-2 transform active:scale-95 transition-all">
                     <UserPlus size={14} /> Vincular Pagador ({selectedIds.size})
@@ -592,7 +631,7 @@ const App = () => {
                     </button>
                 )}
               </div>
-              <button onClick={() => exportToCSV(filteredData, 'confronto_clientes')} className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-black shadow-md hover:bg-slate-900 transition-all"><ArrowDownToLine size={14} /> Exportar CSV</button>
+              <button onClick={() => exportToCSV(displayedData, 'confronto_clientes')} className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-black shadow-md hover:bg-slate-900 transition-all"><ArrowDownToLine size={14} /> Exportar CSV</button>
             </div>
 
             <div className="bg-white rounded-3xl border overflow-hidden shadow-sm">
@@ -615,8 +654,8 @@ const App = () => {
                   <thead className="bg-slate-50/95 backdrop-blur sticky top-0 z-20 border-b shadow-[0_1px_0_0_rgba(15,23,42,0.06)]">
                     <tr className="text-[11px] font-black uppercase text-slate-500 tracking-wider">
                       <th className="px-4 py-3 w-10 text-center border-r border-slate-100">
-                        <button onClick={() => { if (selectedIds.size === filteredData.length) setSelectedIds(new Set()); else setSelectedIds(new Set(filteredData.map(i => i.id))); }}>
-                          {selectedIds.size === filteredData.length && filteredData.length > 0 ? <CheckSquare size={16} className="text-indigo-600" /> : <Square size={16} />}
+                          <button onClick={() => { if (selectedIds.size === displayedData.length) setSelectedIds(new Set()); else setSelectedIds(new Set(displayedData.map(i => i.id))); }}>
+                          {selectedIds.size === displayedData.length && displayedData.length > 0 ? <CheckSquare size={16} className="text-indigo-600" /> : <Square size={16} />}
                         </button>
                       </th>
                       <SortHeader label="Documento" sortKey="id" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
@@ -682,7 +721,7 @@ const App = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-[11px] sm:text-xs">
-                    {filteredData.map(item => (
+                    {displayedData.map(item => (
                       <tr key={item.id} className={`hover:bg-slate-100/60 transition-colors ${selectedIds.has(item.id) ? 'bg-indigo-50/60' : ''}`}>
                         <td className="px-4 py-3 text-center border-r border-slate-100"><button onClick={() => { const n = new Set(selectedIds); if (n.has(item.id)) n.delete(item.id); else n.add(item.id); setSelectedIds(n); }}>{selectedIds.has(item.id) ? <CheckSquare size={16} className="text-indigo-600" /> : <Square size={16} className="text-slate-200" />}</button></td>
                         <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap">{safeString(item.id)}</td>
