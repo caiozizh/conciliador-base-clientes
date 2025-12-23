@@ -77,6 +77,54 @@ function safeString(val) {
   return String(val);
 }
 
+function exportToCSV(rows, filenameBase = 'export') {
+  const headers = [
+    'Documento',
+    'Empresa',
+    'Questor',
+    'Sênior',
+    'Origem Fat.',
+    'Gestta',
+    'Diagnóstico',
+    'Área Gestta',
+    'Área Questor',
+    'Confronto'
+  ];
+
+  const escapeVal = (val) => {
+    const str = safeString(val);
+    if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+    return str;
+  };
+
+  const lines = [
+    headers.join(','),
+    ...rows.map(r => ([
+      r.id,
+      r.nome,
+      r.questor ? 'Sim' : 'Não',
+      r.senior ? 'Sim' : 'Não',
+      r.seniorOrigem,
+      r.gestta,
+      r.diagnostico,
+      r.areaGestta,
+      r.areaQuestor,
+      r.confrontoArea
+    ]).map(escapeVal).join(','))
+  ];
+
+  const csv = '\uFEFF' + lines.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${filenameBase}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 function normalizeSpecie(val) {
   return safeString(val)
     .toUpperCase()
@@ -86,9 +134,18 @@ function normalizeSpecie(val) {
     .trim();
 }
 
-function extractGesttaMarker(name) {
+function getGesttaArea(name) {
   const match = /#\s*(0|1)\s*$/.exec(safeString(name));
-  return match ? match[1] : null;
+  if (!match) return '';
+  return match[1] === '0' ? 'In Company' : 'Integrada';
+}
+
+function getQuestorArea(especie) {
+  const norm = normalizeSpecie(especie);
+  if (!norm) return '';
+  if (/(IN COMPANY|INCOMPANY)/.test(norm)) return 'In Company';
+  if (/(INTEGRADA|INTEGRADO|INTERNO)/.test(norm)) return 'Integrada';
+  return '';
 }
 
 function loadXLSX() {
@@ -121,8 +178,10 @@ const App = () => {
     senior: 'all', 
     seniorOrigem: 'all', 
     gestta: 'all',
-    especieConfronto: 'all',
-    diagnostico: 'all'
+    diagnostico: 'all',
+    areaGestta: 'all',
+    areaQuestor: 'all',
+    confrontoArea: 'all'
   });
   
   const [payerOverrides, setPayerOverrides] = useState(() => readJson(STORAGE_KEYS.payerOverrides, {})); 
@@ -159,20 +218,13 @@ const App = () => {
       const qAt = !!q;
       const gesttaNome = safeString(g?.Nome || g?.NOME || g?.nome || '');
       const questorEspecie = safeString(q?.ESPECIEESTAB);
-      const gesttaMarker = extractGesttaMarker(gesttaNome);
-      let especieConfronto = 'N/A';
-      let especieEsperada = null;
-      if (gesttaMarker) {
-        especieEsperada = gesttaMarker === '0' ? 'IN COMPANY' : 'INTEGRADA';
-        if (!questorEspecie) {
-          especieConfronto = 'Sem Questor';
-        } else {
-          const ok = normalizeSpecie(questorEspecie).includes(normalizeSpecie(especieEsperada));
-          especieConfronto = ok ? 'OK' : 'Divergente';
-        }
-      } else if (questorEspecie) {
-        especieConfronto = 'Sem marcador';
-      }
+      const areaGestta = getGesttaArea(gesttaNome);
+      const areaQuestor = getQuestorArea(questorEspecie);
+      let confrontoArea = 'OK';
+      if (!areaGestta && !areaQuestor) confrontoArea = 'Falta Gestta/Questor';
+      else if (!areaGestta) confrontoArea = 'Falta Gestta';
+      else if (!areaQuestor) confrontoArea = 'Falta Questor';
+      else if (areaGestta !== areaQuestor) confrontoArea = 'Divergente';
 
       let diagnostico = "Divergente";
       if ((qAt && seniorStatus && gAt) || (!qAt && !seniorStatus && !gAt)) diagnostico = "Consistente";
@@ -189,7 +241,7 @@ const App = () => {
         id: safeString(id), nome: safeString(q?.NOMEEMPRESA || s?.Nome || s?.NOME || g?.Nome || 'N/A'),
         codigoQuestor: safeString(q?.CODIGOEMPRESA), codigoSenior: safeString(s?.Sênior), codigoGestta: safeString(g?.Código),
         questor: qAt, senior: seniorStatus, gestta: gesttaSt, diagnostico, seniorOrigem,
-        especieConfronto, especieEsperada,
+        areaGestta, areaQuestor, confrontoArea,
         payerId: pId ? safeString(pId) : null, isDirectSenior: hasDirect, isExcluded: isEx
       };
     });
@@ -207,8 +259,10 @@ const App = () => {
     if (columnFilters.senior !== 'all') items = items.filter(i => i.senior === (columnFilters.senior === 'sim'));
     if (columnFilters.seniorOrigem !== 'all') items = items.filter(i => i.seniorOrigem === columnFilters.seniorOrigem);
     if (columnFilters.gestta !== 'all') items = items.filter(i => i.gestta.toLowerCase() === columnFilters.gestta);
-    if (columnFilters.especieConfronto !== 'all') items = items.filter(i => i.especieConfronto === columnFilters.especieConfronto);
     if (columnFilters.diagnostico !== 'all') items = items.filter(i => i.diagnostico === columnFilters.diagnostico);
+    if (columnFilters.areaGestta !== 'all') items = items.filter(i => i.areaGestta === columnFilters.areaGestta);
+    if (columnFilters.areaQuestor !== 'all') items = items.filter(i => i.areaQuestor === columnFilters.areaQuestor);
+    if (columnFilters.confrontoArea !== 'all') items = items.filter(i => i.confrontoArea === columnFilters.confrontoArea);
     
     if (sortConfig.key) {
       items.sort((a, b) => {
@@ -447,7 +501,7 @@ const App = () => {
                   </button>
                 )}
                 {Object.values(columnFilters).some(v => v !== '' && v !== 'all') && (
-                    <button onClick={() => setColumnFilters({id:'', nome:'', questor:'all', senior:'all', seniorOrigem:'all', gestta:'all', especieConfronto:'all', diagnostico:'all'})} className="text-rose-500 hover:bg-rose-50 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors">
+                    <button onClick={() => setColumnFilters({id:'', nome:'', questor:'all', senior:'all', seniorOrigem:'all', gestta:'all', diagnostico:'all', areaGestta:'all', areaQuestor:'all', confrontoArea:'all'})} className="text-rose-500 hover:bg-rose-50 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors">
                         <FilterX size={14} /> Limpar Filtros
                     </button>
                 )}
@@ -468,6 +522,9 @@ const App = () => {
                     <col className="w-24" />
                     <col className="w-28" />
                     <col className="w-44" />
+                    <col className="w-36" />
+                    <col className="w-36" />
+                    <col className="w-36" />
                   </colgroup>
                   <thead className="bg-slate-50/95 backdrop-blur sticky top-0 z-20 border-b shadow-[0_1px_0_0_rgba(15,23,42,0.06)]">
                     <tr className="text-[11px] font-black uppercase text-slate-500 tracking-wider">
@@ -482,8 +539,10 @@ const App = () => {
                       <SortHeader label="Sênior" sortKey="senior" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
                       <SortHeader label="Origem Fat." sortKey="seniorOrigem" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
                       <SortHeader label="Gestta" sortKey="gestta" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
-                      <SortHeader label="Espécie" sortKey="especieConfronto" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
                       <SortHeader label="Diagnóstico" sortKey="diagnostico" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
+                      <SortHeader label="Área Gestta" sortKey="areaGestta" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
+                      <SortHeader label="Área Questor" sortKey="areaQuestor" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
+                      <SortHeader label="Confronto" sortKey="confrontoArea" currentSort={sortConfig} onSort={(k) => setSortConfig(p => ({key: k, direction: p.key === k && p.direction === 'asc' ? 'desc' : 'asc'}))} />
                     </tr>
                     <tr className="bg-slate-50/60 border-b">
                       <td className="border-r border-slate-100"></td>
@@ -502,22 +561,36 @@ const App = () => {
                       </td>
                       <td className="px-4 py-2"><select className="w-full h-8 px-2 border rounded text-[11px] bg-white" value={columnFilters.gestta} onChange={(e) => setColumnFilters({...columnFilters, gestta: e.target.value})}><option value="all">Todos</option><option value="ativo">Ativo</option><option value="inativo">Inativo</option><option value="ausente">Ausente</option></select></td>
                       <td className="px-4 py-2">
-                        <select className="w-full h-8 px-2 border rounded text-[11px] bg-white" value={columnFilters.especieConfronto} onChange={(e) => setColumnFilters({...columnFilters, especieConfronto: e.target.value})}>
-                          <option value="all">Todos</option>
-                          <option value="OK">OK</option>
-                          <option value="Divergente">Divergente</option>
-                          <option value="Sem Questor">Sem Questor</option>
-                          <option value="Sem marcador">Sem marcador</option>
-                          <option value="N/A">N/A</option>
-                        </select>
-                      </td>
-                      <td className="px-4 py-2">
                         <select className="w-full h-8 px-2 border rounded text-[11px] bg-white" value={columnFilters.diagnostico} onChange={(e) => setColumnFilters({...columnFilters, diagnostico: e.target.value})}>
                           <option value="all">Todos</option>
                           <option value="Consistente">Consistente</option>
                           <option value="Falta Cadastro Questor">Falta Questor</option>
                           <option value="Cliente Inativo (Baixa)">Pendente Baixa</option>
                           <option value="Divergente">Divergente</option>
+                        </select>
+                      </td>
+                      <td className="px-4 py-2">
+                        <select className="w-full h-8 px-2 border rounded text-[11px] bg-white" value={columnFilters.areaGestta} onChange={(e) => setColumnFilters({...columnFilters, areaGestta: e.target.value})}>
+                          <option value="all">Todos</option>
+                          <option value="In Company">In Company</option>
+                          <option value="Integrada">Integrada</option>
+                        </select>
+                      </td>
+                      <td className="px-4 py-2">
+                        <select className="w-full h-8 px-2 border rounded text-[11px] bg-white" value={columnFilters.areaQuestor} onChange={(e) => setColumnFilters({...columnFilters, areaQuestor: e.target.value})}>
+                          <option value="all">Todos</option>
+                          <option value="In Company">In Company</option>
+                          <option value="Integrada">Integrada</option>
+                        </select>
+                      </td>
+                      <td className="px-4 py-2">
+                        <select className="w-full h-8 px-2 border rounded text-[11px] bg-white" value={columnFilters.confrontoArea} onChange={(e) => setColumnFilters({...columnFilters, confrontoArea: e.target.value})}>
+                          <option value="all">Todos</option>
+                          <option value="OK">OK</option>
+                          <option value="Divergente">Divergente</option>
+                          <option value="Falta Questor">Falta Questor</option>
+                          <option value="Falta Gestta">Falta Gestta</option>
+                          <option value="Falta Gestta/Questor">Falta Gestta/Questor</option>
                         </select>
                       </td>
                     </tr>
@@ -550,14 +623,15 @@ const App = () => {
                             </div>
                         </td>
                         <td className="px-6 py-4"><Badge text={safeString(item.gestta)} color={item.gestta.toLowerCase() === 'ativo' ? 'emerald' : 'red'} /></td>
+                        <td className="px-6 py-4"><DiagBadge text={safeString(item.diagnostico)} /></td>
+                        <td className="px-6 py-4"><Badge text={safeString(item.areaGestta || 'N/A')} color={item.areaGestta ? 'blue' : 'slate'} /></td>
+                        <td className="px-6 py-4"><Badge text={safeString(item.areaQuestor || 'N/A')} color={item.areaQuestor ? 'orange' : 'slate'} /></td>
                         <td className="px-6 py-4">
                           <Badge
-                            text={safeString(item.especieConfronto)}
-                            color={item.especieConfronto === 'OK' ? 'emerald' : item.especieConfronto === 'Divergente' ? 'red' : 'slate'}
-                            title={item.especieEsperada ? `Esperado: ${item.especieEsperada}` : undefined}
+                            text={safeString(item.confrontoArea)}
+                            color={item.confrontoArea === 'OK' ? 'emerald' : item.confrontoArea === 'Divergente' ? 'red' : 'slate'}
                           />
                         </td>
-                        <td className="px-6 py-4"><DiagBadge text={safeString(item.diagnostico)} /></td>
                       </tr>
                     ))}
                   </tbody>
