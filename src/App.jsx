@@ -189,6 +189,40 @@ const App = () => {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [isPayerModalOpen, setIsPayerModalOpen] = useState(false);
   const [payerSearch, setPayerSearch] = useState('');
+  const [dataView, setDataView] = useState('questor');
+  const [dataSearch, setDataSearch] = useState('');
+  const [dataSelectedRows, setDataSelectedRows] = useState({
+    questor: new Set(),
+    senior: new Set(),
+    gestta: new Set()
+  });
+  const [dataEditingRow, setDataEditingRow] = useState({
+    questor: null,
+    senior: null,
+    gestta: null
+  });
+  const [dataEditBackup, setDataEditBackup] = useState({
+    questor: null,
+    senior: null,
+    gestta: null
+  });
+
+  const dataColumns = useMemo(() => ({
+    questor: ['INSCRFEDERAL', 'NOMEEMPRESA', 'CODIGOEMPRESA', 'ESPECIEESTAB'],
+    senior: ['CNPJ', 'Nome', 'Sênior'],
+    gestta: ['CNPJ', 'Nome', 'Código', 'Ativo/inativo']
+  }), []);
+
+  const filteredDataRows = useMemo(() => {
+    const rows = data[dataView] || [];
+    const cols = dataColumns[dataView] || [];
+    const term = dataSearch.trim().toLowerCase();
+    const indexed = rows.map((row, index) => ({ row, index }));
+    if (!term) return indexed;
+    return indexed.filter(({ row }) =>
+      cols.some(col => safeString(row?.[col]).toLowerCase().includes(term))
+    );
+  }, [data, dataView, dataColumns, dataSearch]);
 
   // 2. Memos de Processamento (Calculados incondicionalmente)
   const allConsolidatedData = useMemo(() => {
@@ -430,6 +464,58 @@ const App = () => {
     await registerLog('Limpeza', `A base do sistema ${system.toUpperCase()} foi limpa.`);
   };
 
+  const updateCell = (system, rowIndex, key, value) => {
+    setData(prev => {
+      const nextRows = [...prev[system]];
+      const current = nextRows[rowIndex] || {};
+      nextRows[rowIndex] = { ...current, [key]: value };
+      return { ...prev, [system]: nextRows };
+    });
+  };
+
+  const toggleDataRow = (system, rowIndex) => {
+    setDataSelectedRows(prev => {
+      const next = new Set(prev[system]);
+      if (next.has(rowIndex)) next.delete(rowIndex);
+      else next.add(rowIndex);
+      return { ...prev, [system]: next };
+    });
+  };
+
+  const startEditRow = (system, rowIndex) => {
+    setDataEditBackup(prev => ({
+      ...prev,
+      [system]: { rowIndex, row: { ...(data[system]?.[rowIndex] || {}) } }
+    }));
+    setDataEditingRow(prev => ({ ...prev, [system]: rowIndex }));
+  };
+
+  const cancelEditRow = (system) => {
+    const backup = dataEditBackup[system];
+    if (!backup) return;
+    setData(prev => {
+      const nextRows = [...prev[system]];
+      nextRows[backup.rowIndex] = backup.row;
+      return { ...prev, [system]: nextRows };
+    });
+    setDataEditingRow(prev => ({ ...prev, [system]: null }));
+    setDataEditBackup(prev => ({ ...prev, [system]: null }));
+  };
+
+  const saveEditRow = async (system) => {
+    const backup = dataEditBackup[system];
+    const rowIndex = dataEditingRow[system];
+    if (backup && rowIndex !== null) {
+      const currentRow = data[system]?.[rowIndex] || {};
+      const changed = JSON.stringify(currentRow) !== JSON.stringify(backup.row);
+      if (changed) {
+        await registerLog('Edição', `Registro ${system.toUpperCase()} linha ${rowIndex + 1} atualizado.`);
+      }
+    }
+    setDataEditingRow(prev => ({ ...prev, [system]: null }));
+    setDataEditBackup(prev => ({ ...prev, [system]: null }));
+  };
+
   // --- RENDERS CONDICIONAIS ---
 
   if (!isLogged) {
@@ -468,7 +554,7 @@ const App = () => {
             </div>
           </div>
           <nav className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-            {[{ id: 'upload', label: 'Importar', icon: Download }, { id: 'explorer', label: 'Trabalho', icon: Users }, { id: 'audit', label: 'Auditoria', icon: History }].map(tab => (
+            {[{ id: 'upload', label: 'Importar', icon: Download }, { id: 'explorer', label: 'Trabalho', icon: Users }, { id: 'data', label: 'Dados', icon: FileText }, { id: 'audit', label: 'Auditoria', icon: History }].map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-black transition-all ${activeTab === tab.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}>
                 <tab.icon size={14} /> {safeString(tab.label)}
               </button>
@@ -673,6 +759,52 @@ const App = () => {
             </div>
           </div>
         )}
+
+        {activeTab === 'data' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="bg-white rounded-3xl border shadow-sm p-4 flex flex-col md:flex-row md:items-center gap-4 justify-between">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { id: 'questor', label: 'Questor' },
+                  { id: 'senior', label: 'Sênior' },
+                  { id: 'gestta', label: 'Gestta' }
+                ].map(btn => (
+                  <button
+                    key={btn.id}
+                    onClick={() => setDataView(btn.id)}
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                      dataView === btn.id ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
+              <div className="relative w-full md:w-80">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <input
+                  type="text"
+                  placeholder="Buscar nos dados..."
+                  className="w-full pl-9 pr-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                  value={dataSearch}
+                  onChange={(e) => setDataSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <DataTable
+              title={dataView === 'questor' ? 'Questor' : dataView === 'senior' ? 'Sênior' : 'Gestta'}
+              rows={filteredDataRows}
+              columns={dataColumns[dataView]}
+              selectedRows={dataSelectedRows[dataView]}
+              onToggleRow={(rowIndex) => toggleDataRow(dataView, rowIndex)}
+              editingRow={dataEditingRow[dataView]}
+              onStartEdit={(rowIndex) => startEditRow(dataView, rowIndex)}
+              onSaveEdit={() => saveEditRow(dataView)}
+              onCancelEdit={() => cancelEditRow(dataView)}
+              onChange={(rowIndex, key, value) => updateCell(dataView, rowIndex, key, value)}
+            />
+          </div>
+        )}
       </main>
 
       {/* Modal Pagador */}
@@ -738,5 +870,89 @@ const DiagBadge = ({ text }) => {
   const isFalta = text.includes('Falta');
   return <span className={`px-3 py-1 rounded-full text-[9px] font-black border shadow-sm leading-none ${isFalta ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-rose-100 text-rose-800 border-rose-200'}`}>{safeString(text).toUpperCase()}</span>;
 };
+
+const DataTable = ({ title, rows, columns, selectedRows, onToggleRow, editingRow, onStartEdit, onSaveEdit, onCancelEdit, onChange }) => (
+  <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
+    <div className="px-6 py-4 border-b bg-slate-50 flex items-center justify-between">
+      <h3 className="font-black uppercase tracking-tight text-sm">{safeString(title)}</h3>
+      <span className="text-[10px] font-black uppercase text-slate-500">{rows.length} registros</span>
+    </div>
+    {rows.length === 0 ? (
+      <div className="p-8 text-center text-slate-400 text-sm">Sem dados importados.</div>
+    ) : (
+      <div className="overflow-x-auto max-h-[50vh]">
+        <table className="w-full min-w-[1100px] text-left text-xs">
+          <thead className="bg-slate-50 sticky top-0 z-10 border-b">
+            <tr className="text-[10px] font-black uppercase text-slate-500 tracking-widest">
+              <th className="px-4 py-3 w-12 text-center border-r border-slate-100">#</th>
+              <th className="px-4 py-3 w-10 text-center border-r border-slate-100">
+                <CheckSquare size={14} className="text-slate-300 mx-auto" />
+              </th>
+              {columns.map(col => (
+                <th key={col} className="px-4 py-3 border-r border-slate-100">{safeString(col)}</th>
+              ))}
+              <th className="px-4 py-3 w-24 text-center">Ação</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map(({ row, index }) => (
+              <tr key={index} className="hover:bg-slate-50">
+                <td className="px-4 py-2 text-center border-r border-slate-100 text-[11px] text-slate-500 font-mono">
+                  {index + 1}
+                </td>
+                <td className="px-4 py-2 text-center border-r border-slate-100">
+                  <button onClick={() => onToggleRow(index)}>
+                    {selectedRows?.has(index) ? <CheckSquare size={16} className="text-indigo-600" /> : <Square size={16} className="text-slate-200" />}
+                  </button>
+                </td>
+                {columns.map(col => (
+                  <td key={`${index}-${col}`} className="px-4 py-2 border-r border-slate-100">
+                    {editingRow === index ? (
+                      <input
+                        type="text"
+                        className="w-full bg-white border rounded px-2 py-1 text-[11px]"
+                        value={safeString(row?.[col])}
+                        onChange={(e) => onChange(index, col, e.target.value)}
+                      />
+                    ) : (
+                      <div className="text-slate-700 text-[11px] truncate" title={safeString(row?.[col])}>
+                        {safeString(row?.[col])}
+                      </div>
+                    )}
+                  </td>
+                ))}
+                <td className="px-4 py-2 text-center">
+                  {editingRow === index ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        onClick={onSaveEdit}
+                        className="px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all bg-emerald-600 text-white"
+                      >
+                        Salvar
+                      </button>
+                      <button
+                        onClick={onCancelEdit}
+                        className="px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all bg-slate-100 text-slate-600 hover:text-slate-900"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => onStartEdit(index)}
+                      className="px-3 py-1 rounded-lg text-[10px] font-black uppercase transition-all bg-slate-100 text-slate-600 hover:text-slate-900"
+                    >
+                      Editar
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+);
 
 export default App;
